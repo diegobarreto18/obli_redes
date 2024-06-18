@@ -6,7 +6,7 @@ import threading
 from datetime import datetime
 import os
 from getpass import getpass
-import subprocess
+import queue
 
 # # # # # # # # # # # # # # # # # # # # # # # #
 # Diego Barreto - 5.319.339-9				  #
@@ -20,6 +20,8 @@ IP_AUTENTICACION = sys.argv[2]
 PUERTO_AUTENTICACION = int(sys.argv[3])
 
 clients = []
+input_queue = queue.Queue()
+nombre_usuario_autenticado = ''
 
 def password_a_md5(password):
     if not password:
@@ -73,7 +75,7 @@ def autenticar():
     nombre_completo = solicitud_server_autenticacion(password)
     if not nombre_completo:
         print('Usuario o clave incorrecto')
-        os._exit()
+        os._exit(0)
 
     return nombre_completo
 
@@ -81,51 +83,62 @@ def get_destinatario(mensaje: str):
 	data = mensaje.split()
 	return data[0]
 
-def get_mensaje_formateado(mensaje: str, destinatario):
+def get_mensaje_formateado_para_enviar(mensaje: str, destinatario):
 	division_mensaje = mensaje.split()
 	mensaje_original = ' '.join(division_mensaje[1:])
-	return f"[{datetime.now().strftime('%Y.%m.%d')} {datetime.now().strftime('%H:%M')}] {destinatario} dice: {mensaje_original}".encode()
+	return f"[{datetime.now().strftime('%Y.%m.%d')} {datetime.now().strftime('%H:%M')}] {destinatario} {nombre_usuario_autenticado} dice: {mensaje_original}".encode()
+
+def get_mensaje_formateado_recibido(mensaje: str, destinatario):
+    return f"[{datetime.now().strftime('%Y.%m.%d')} {datetime.now().strftime('%H:%M')}] {destinatario} dice: {mensaje}"
+
+def input_thread():
+    while True:
+        mensaje = input()
+        input_queue.put(mensaje)
 
 def emitir():
-    mensaje = input()
+    mensaje = input_queue.get()
     destinatario = get_destinatario(mensaje)
-    mensaje_completo = get_mensaje_formateado(mensaje, destinatario)
+    mensaje_completo = get_mensaje_formateado_para_enviar(mensaje, destinatario)
         
     emisor_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     emisor_socket.connect((destinatario, PUERTO))
     emisor_socket.sendall(mensaje_completo)
 
-def recibir(socket):
-	while True:
-		data = socket.recv(1024)
-        
-		if not data:
-			continue
-        
-		print(data.decode())
+def recibir(cliente_socket, cliente_direccion):
+        while True:
+            data = cliente_socket.recv(1024)
+
+            if not data.decode() or data.decode() == '\r\n':
+                continue
+
+            destinatario = get_destinatario(data.decode())
+            mensaje_completo = get_mensaje_formateado_para_enviar(data.decode(), destinatario)
+            print(mensaje_completo.decode())
                 
 def levantar_server():
     while True:
         server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        server_socket.bind(('127.0.0.1', PUERTO))
+        server_socket.bind((socket.gethostbyname(socket.gethostname()), PUERTO))
         server_socket.listen()
                 
         cliente_socket, cliente_direccion = server_socket.accept()
         clients.append(cliente_socket)
-                
-        emitir_thread = threading.Thread(target=emitir, args=())
-        emitir_thread.start()
-        emitir_thread.join()
-                
-        client_thread = threading.Thread(target=recibir, args=(cliente_socket,))
+                                
+        client_thread = threading.Thread(target=recibir, args=(cliente_socket, cliente_direccion))
         client_thread.start()
-        client_thread.join()
 
-nombre = autenticar()
+nombre_usuario_autenticado = autenticar()
 
-if not nombre:
+if not nombre_usuario_autenticado:
 	pass
         
-print(f"Bienvenido {nombre}")
+print(f"Bienvenido {nombre_usuario_autenticado}")
+
+input_var_thread = threading.Thread(target=input_thread, daemon=True)
+input_var_thread.start()
+
+emitir_thread = threading.Thread(target=emitir, args=())
+emitir_thread.start()
 
 levantar_server()
