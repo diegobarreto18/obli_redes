@@ -3,6 +3,10 @@ import sys
 import time
 import hashlib
 import threading
+from datetime import datetime
+import os
+from getpass import getpass
+import subprocess
 
 # # # # # # # # # # # # # # # # # # # # # # # #
 # Diego Barreto - 5.319.339-9				  #
@@ -11,92 +15,117 @@ import threading
 # Alexis Rojas - 4.679.803-9				  #
 # # # # # # # # # # # # # # # # # # # # # # # #
 
+PUERTO = int(sys.argv[1])
+IP_AUTENTICACION = sys.argv[2]
+PUERTO_AUTENTICACION = int(sys.argv[3])
 
-print("Cliente.py")
-
-#Inputs de los datos
-nombre = input('Ingrese nombre \n').strip() 
-password = input('Ingrese contraseña \n').strip()
-
-#Esto es para después validar que se logueó bien
-login = False
-
-#Inicio declaracion de funciones
+clients = []
 
 def password_a_md5(password):
     if not password:
         return None
     return hashlib.md5(password.encode('utf-8')).hexdigest()
 
+def get_server_responses(sock):
+    respuestas = []
 
-def enviar_mensaje(destino):
-	send_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-	
-	
-	#CORREGIR HARDCODE
-	#send_socket.connect((destino,4300))
+    while True:
+        time.sleep(1.5)
+        try:
+            next_data: bytes = sock.recv(3000)
+            if not next_data:
+                break
+            next_response = next_data.decode()
+            respuestas = next_response.split('\r\n')
+        except socket.error:
+            raise Exception()
+    return respuestas
 
-	to_send = input().strip()
+def solicitud_server_autenticacion(nombre_de_usuario):
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as auth_socket:
+        auth_socket.connect((IP_AUTENTICACION, PUERTO_AUTENTICACION))
 
-	send_socket.send(to_send.encode())
+        auth_socket.sendall(b"")
+        data = auth_socket.recv(3000)
+        if not data.decode().startswith("Redes 2024 - Laboratorio - Autenticacion de Usuarios"):
+            return None
+        
+        md5_password = password_a_md5(nombre_de_usuario)
+        mensaje = f"{nombre_de_usuario}-{md5_password}\r\n"
 
+        auth_socket.sendall(mensaje.encode('utf-8'))
+        respuestas = get_server_responses(auth_socket)
 
-#Fin declaracion de funciones
+        if respuestas[0] == 'NO':
+            return None
 
-#Creo socket
-auth_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-auth_socket.connect((sys.argv[2], int(sys.argv[3])))
+        nombre = respuestas[1]
+        return nombre
 
-#Recibo saludo del Servidor
-msg_in = auth_socket.recv(1024).decode('utf-8').strip()
+def autenticar():
+    nombre = input('Usuario: ')
+    password = getpass('Clave: ')
 
-#Inicio proceso de autenticacion
-if msg_in == 'Redes 2024 - Laboratorio - Autenticacion de Usuarios':
-	
-	password_a_md5 = password_a_md5(password)
-	msg = f"{nombre}-{password_a_md5}\r\n"
+    if not nombre or not password:
+        print('Por favor ingrese todos los datos requeridos')
+        os._exit()
 
-	auth_socket.send(msg.encode())
-	
-	time.sleep(1)
-	
-	msg_in = auth_socket.recv(1024).decode('utf-8').strip()
+    nombre_completo = solicitud_server_autenticacion(password)
+    if not nombre_completo:
+        print('Usuario o clave incorrecto')
+        os._exit()
 
-	if msg_in != 'NO':
-		login = True
-		print(f'Usuario válido')
-		decision = input('quiere enviar mensaje? \n').strip()
-		
-		if decision == 'S':
-			host_destino = input('Ingrese ip destino o nombre host \n').strip()
-			enviar_mensaje(host_destino)
-		else:
-			pass
-	else:
-		print(f"Usuario incorrecto, cerrando conexión")
-	
-	auth_socket.close()
+    return nombre_completo
 
-else:
-	print(f"Protocolo Incorrecto")
+def get_destinatario(mensaje: str):
+	data = mensaje.split()
+	return data[0]
 
+def get_mensaje_formateado(mensaje: str, destinatario):
+	division_mensaje = mensaje.split()
+	mensaje_original = ' '.join(division_mensaje[1:])
+	return f"[{datetime.now().strftime('%Y.%m.%d')} {datetime.now().strftime('%H:%M')}] {destinatario} dice: {mensaje_original}".encode()
 
-auth_socket.close()
+def emitir():
+    mensaje = input()
+    destinatario = get_destinatario(mensaje)
+    mensaje_completo = get_mensaje_formateado(mensaje, destinatario)
+        
+    emisor_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    emisor_socket.connect((destinatario, PUERTO))
+    emisor_socket.sendall(mensaje_completo)
 
-def manejar_ingreso(socket):
+def recibir(socket):
 	while True:
 		data = socket.recv(1024)
+        
 		if not data:
-			break
-		
+			continue
+        
 		print(data.decode())
-	
+                
+def levantar_server():
+    while True:
+        server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server_socket.bind(('127.0.0.1', PUERTO))
+        server_socket.listen()
+                
+        cliente_socket, cliente_direccion = server_socket.accept()
+        clients.append(cliente_socket)
+                
+        emitir_thread = threading.Thread(target=emitir, args=())
+        emitir_thread.start()
+        emitir_thread.join()
+                
+        client_thread = threading.Thread(target=recibir, args=(cliente_socket,))
+        client_thread.start()
+        client_thread.join()
 
-receptor_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-receptor_socket.bind(("192.168.32.14", int(sys.argv[1])))
-receptor_socket.listen()
+nombre = autenticar()
 
-conexion, addr = receptor_socket.accept()
-receptor_thread = threading.Thread(target=manejar_ingreso, args=(conexion,))
-receptor_thread.start()
-receptor_thread.join()
+if not nombre:
+	pass
+        
+print(f"Bienvenido {nombre}")
+
+levantar_server()
