@@ -18,8 +18,7 @@ import queue
 PUERTO = int(sys.argv[1])
 IP_AUTENTICACION = sys.argv[2]
 PUERTO_AUTENTICACION = int(sys.argv[3])
-
-MI_IP = socket.gethostbyname(socket.gethostname())
+MI_IP = sys.argv[4]
 
 clients = []
 input_queue = queue.Queue()
