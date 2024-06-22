@@ -21,6 +21,8 @@ PUERTO_AUTENTICACION = int(sys.argv[3])
 
 MI_IP = sys.argv[4]
 
+MAX_LARGO_MENSAJE = 255
+
 clients = []
 input_queue = queue.Queue()
 nombre_usuario_autenticado = ''
@@ -92,18 +94,23 @@ def get_archivo(mensaje):
     if not path or not os.path.exists(path):
         return archivo_binario
     
-    nombre_archivo, extension = os.path.splitext(path)
+    archivo_full_nombre = os.path.basename(path)
+    nombre_archivo, extension = os.path.splitext(archivo_full_nombre)
 
     with open(path, 'rb') as archivo:
-        archivo_binario = archivo.read()
+        all_data = b''
+        while True:
+            data = archivo.read(1024)
+            if not data:
+                break
+            all_data += data
 
-    nombre_archivo = os.path.splitext(path)
-    return [archivo_binario, nombre_archivo + extension + '\n']
+    return [all_data, nombre_archivo + extension + '\n']
 
-def get_mensaje_formateado(mensaje):
+def get_mensaje_formateado(mensaje, destinatario = None):
 	division_mensaje = mensaje.split()
 	mensaje_original = ' '.join(division_mensaje[1:])
-	return f"[{datetime.now().strftime('%Y.%m.%d')} {datetime.now().strftime('%H:%M')}] {MI_IP} {nombre_usuario_autenticado} dice: {mensaje_original}".encode()
+	return f"[{datetime.now().strftime('%Y.%m.%d')} {datetime.now().strftime('%H:%M')}] {MI_IP if not destinatario else destinatario} {nombre_usuario_autenticado} dice: {mensaje_original}".encode()
 
 def input_thread():
     while True:
@@ -125,23 +132,33 @@ def emitir():
         
         if bool(archivo_a_mandar):
             emisor_socket.sendall(b'ARCHIVO\n')
+            time.sleep(1)
             emisor_socket.sendall(nombre_archivo_a_mandar.encode())
+            time.sleep(1)
             emisor_socket.sendall(archivo_a_mandar)
+            time.sleep(1)
+            emisor_socket.sendall(b'\n')
         else:
             mensaje_completo = get_mensaje_formateado(mensaje)
-            emisor_socket.sendall('TEXTO\n'.encode())
+            emisor_socket.sendall(b'TEXTO\n')
+            time.sleep(1)
             emisor_socket.sendall(mensaje_completo)
-            
+
 def guardar_archivo(cliente_socket):
     nombre_archivo = get_nombre_de_archivo(cliente_socket)
     path_a_guardar = os.path.join(os.getcwd(), nombre_archivo)
 
     with open(path_a_guardar, 'wb') as archivo:
+        data_completa = b''
         while True:
-            file_data = cliente_socket.recv(1024)
-            if not file_data:
+            data = cliente_socket.recv(1024)
+            if not data or data == '\n':
                 break
-            archivo.write(file_data)
+            data_completa += data
+
+        archivo.write(data_completa)
+
+    return nombre_archivo
 
 def get_nombre_de_archivo(cliente_socket):
     nombre_archivo = b''
@@ -151,6 +168,7 @@ def get_nombre_de_archivo(cliente_socket):
             break
         nombre_archivo += char
     nombre_archivo = nombre_archivo.decode()
+    return nombre_archivo
 
 def recibir(cliente_socket):
     while True:
@@ -160,8 +178,11 @@ def recibir(cliente_socket):
             continue
 
         if data.decode() == 'ARCHIVO\n':
-            guardar_archivo(cliente_socket)
-            print("Archivo guardado")
+            archivo_nombre = guardar_archivo(cliente_socket)
+            if not archivo_nombre:
+                print(f"[{datetime.now().strftime('%Y.%m.%d')} {datetime.now().strftime('%H:%M')}] <Error recibiendo archivo>")
+            else:
+                print(f"<Recibido ./{archivo_nombre}>")
         if data.decode() == 'TEXTO\n':
             print(data.decode())
                 
