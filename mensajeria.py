@@ -23,8 +23,8 @@ MI_IP = sys.argv[4]
 
 MAX_LARGO_MENSAJE = 255
 
-clients = []
 input_queue = queue.Queue()
+clientes = []
 nombre_usuario_autenticado = ''
 
 def password_a_md5(password):
@@ -125,7 +125,13 @@ def emitir():
         nombre_archivo_a_mandar = None
 
         if mensaje.find('&file') > -1:
-            archivo_a_mandar, nombre_archivo_a_mandar = get_archivo(mensaje)
+            tupla = get_archivo(mensaje)
+            if not tupla:
+                print('El archivo no existe o no se encontro')
+                return
+
+            archivo_a_mandar, nombre_archivo_a_mandar = tupla
+
             
         emisor_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         emisor_socket.connect((destinatario, PUERTO))
@@ -135,28 +141,40 @@ def emitir():
             time.sleep(1)
             emisor_socket.sendall(nombre_archivo_a_mandar.encode())
             time.sleep(1)
+            emisor_socket.sendall(b'\n')
+            time.sleep(1)
             emisor_socket.sendall(archivo_a_mandar)
             time.sleep(1)
-            emisor_socket.sendall(b'\n')
+            emisor_socket.sendall(b'ENDOFFILE')
         else:
             mensaje_completo = get_mensaje_formateado(mensaje)
             emisor_socket.sendall(b'TEXTO\n')
             time.sleep(1)
             emisor_socket.sendall(mensaje_completo)
+            time.sleep(1)
+            emisor_socket.sendall(b'\n')
 
 def guardar_archivo(cliente_socket):
     nombre_archivo = get_nombre_de_archivo(cliente_socket)
+
+    if not nombre_archivo:
+        return None
+
     path_a_guardar = os.path.join(os.getcwd(), nombre_archivo)
 
     with open(path_a_guardar, 'wb') as archivo:
-        data_completa = b''
+        total_data = b''
+        primer_chunk = True
         while True:
             data = cliente_socket.recv(1024)
-            if not data or data == '\n':
+            if primer_chunk:
+                data = data.lstrip(b'\n')
+                primer_chunk = False
+            if b'ENDOFFILE' in data:
                 break
-            data_completa += data
-
-        archivo.write(data_completa)
+            total_data += data
+        
+        archivo.write(total_data)
 
     return nombre_archivo
 
@@ -170,6 +188,17 @@ def get_nombre_de_archivo(cliente_socket):
     nombre_archivo = nombre_archivo.decode()
     return nombre_archivo
 
+def recibir_mensaje(cliente_socket) -> bytes:
+    respuestas = []
+
+    while True:
+        data = cliente_socket.recv(1024)
+        if not data or data.endswith(b'\n'):
+            break
+        respuestas.append(data.decode())
+    
+    return respuestas[0]
+
 def recibir(cliente_socket):
     while True:
         data = cliente_socket.recv(1024)
@@ -177,14 +206,14 @@ def recibir(cliente_socket):
         if not data.decode() or data.decode() == '\r\n':
             continue
 
-        if data.decode() == 'ARCHIVO\n':
+        if data.startswith(b'ARCHIVO\n'):
             archivo_nombre = guardar_archivo(cliente_socket)
             if not archivo_nombre:
                 print(f"[{datetime.now().strftime('%Y.%m.%d')} {datetime.now().strftime('%H:%M')}] <Error recibiendo archivo>")
             else:
                 print(f"<Recibido ./{archivo_nombre}>")
-        if data.decode() == 'TEXTO\n':
-            print(data.decode())
+        if data.startswith(b'TEXTO\n'):
+            print(recibir_mensaje(cliente_socket))
                 
 def levantar_server():
     while True:
@@ -193,7 +222,7 @@ def levantar_server():
         server_socket.listen()
                 
         cliente_socket, cliente_direccion = server_socket.accept()
-        clients.append(cliente_socket)
+        clientes.append(cliente_socket)
                                 
         client_thread = threading.Thread(target=recibir, args=(cliente_socket,))
         client_thread.start()
