@@ -7,6 +7,7 @@ from datetime import datetime
 import os
 from getpass import getpass
 import queue
+import ipaddress
 
 # # # # # # # # # # # # # # # # # # # # # # # #
 # Diego Barreto - 5.319.339-9				  #
@@ -18,7 +19,7 @@ import queue
 PUERTO = int(sys.argv[1])
 IP_AUTENTICACION = sys.argv[2]
 PUERTO_AUTENTICACION = int(sys.argv[3])
-MI_IP = socket.gethostbyname(socket.gethostname())
+MI_IP = sys.argv[4]
 
 MAX_LARGO_MENSAJE = 255
 
@@ -131,7 +132,10 @@ def emitir():
 
             archivo_a_mandar, nombre_archivo_a_mandar = tupla
 
-            
+        if destinatario == '*':
+            broadcast(mensaje, archivo_a_mandar, nombre_archivo_a_mandar)
+            return
+
         emisor_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         emisor_socket.connect((destinatario, PUERTO))
         
@@ -186,6 +190,26 @@ def get_nombre_de_archivo(cliente_socket):
         nombre_archivo += char
     nombre_archivo = nombre_archivo.decode()
     return nombre_archivo
+
+def broadcast(mensaje, archivo_a_mandar, nombre_archivo_a_mandar):
+    for cliente in clientes:
+        if bool(archivo_a_mandar):
+            cliente.sendall(b'ARCHIVO\n')
+            time.sleep(1)
+            cliente.sendall(nombre_archivo_a_mandar.encode())
+            time.sleep(1)
+            cliente.sendall(b'\n')
+            time.sleep(1)
+            cliente.sendall(archivo_a_mandar)
+            time.sleep(1)
+            cliente.sendall(b'ENDOFFILE')
+        else:
+            mensaje_completo = get_mensaje_formateado(mensaje)
+            cliente.sendall(b'TEXTO\n')
+            time.sleep(1)
+            cliente.sendall(mensaje_completo)
+            time.sleep(1)
+            cliente.sendall(b'\n')
 
 def recibir_mensaje(cliente_socket) -> bytes:
     respuestas = []
