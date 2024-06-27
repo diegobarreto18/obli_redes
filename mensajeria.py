@@ -24,7 +24,6 @@ MI_IP = sys.argv[4]
 MAX_LARGO_MENSAJE = 255
 
 input_queue = queue.Queue()
-clientes = []
 nombre_usuario_autenticado = ''
 
 def password_a_md5(password):
@@ -121,38 +120,50 @@ def emitir():
     while True:
         mensaje = input_queue.get()
         destinatario = get_destinatario(mensaje)
-        archivo_a_mandar = None
-        nombre_archivo_a_mandar = None
+        archivo_a_mandar, nombre_archivo_a_mandar = None, None
 
-        if mensaje.find('&file') > -1:
+        if '&file' in mensaje:
             tupla = get_archivo(mensaje)
             if not tupla:
-                print('El archivo no existe o no se encontro')
-                return
+                print('El archivo no existe o no se encontró')
+                continue
 
             archivo_a_mandar, nombre_archivo_a_mandar = tupla
 
+        try:
+            if destinatario == '*':
+                emisor_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                emisor_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+                emisor_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            else:
+                emisor_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                emisor_socket.connect((destinatario, PUERTO))
             
-        emisor_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        emisor_socket.connect((destinatario, PUERTO))
-        
-        if bool(archivo_a_mandar):
-            emisor_socket.sendall(b'ARCHIVO\n')
-            time.sleep(1)
-            emisor_socket.sendall(nombre_archivo_a_mandar.encode())
-            time.sleep(1)
-            emisor_socket.sendall(b'\n')
-            time.sleep(1)
-            emisor_socket.sendall(archivo_a_mandar)
-            time.sleep(1)
-            emisor_socket.sendall(b'ENDOFFILE')
-        else:
-            mensaje_completo = get_mensaje_formateado(mensaje)
-            emisor_socket.sendall(b'TEXTO\n')
-            time.sleep(1)
-            emisor_socket.sendall(mensaje_completo)
-            time.sleep(1)
-            emisor_socket.sendall(b'\n')
+            if archivo_a_mandar:
+                mandar(emisor_socket, b'ARCHIVO\n', destinatario == '*')
+                time.sleep(0.1)
+                mandar(emisor_socket, nombre_archivo_a_mandar.encode(), destinatario == '*')
+                time.sleep(0.1)
+                mandar(emisor_socket, b'\n', destinatario == '*')
+                time.sleep(0.1)
+                mandar(emisor_socket, archivo_a_mandar, destinatario == '*')
+                time.sleep(0.1)
+                mandar(emisor_socket, b'ENDOFFILE', destinatario == '*')
+            else:
+                mensaje_completo = get_mensaje_formateado(mensaje)
+                mandar(emisor_socket, b'TEXTO\n', destinatario == '*')
+                time.sleep(0.1)
+                mandar(emisor_socket, mensaje_completo, destinatario == '*')
+                time.sleep(0.1)
+                mandar(emisor_socket, b'\n', destinatario == '*')
+        finally:
+            emisor_socket.close()
+
+def mandar(emisor_socket, data, es_udp):
+    if es_udp:
+        emisor_socket.sendto(data, ('255.255.255.255', PUERTO))
+    else:
+        emisor_socket.sendall(data)
 
 def guardar_archivo(cliente_socket):
     nombre_archivo = get_nombre_de_archivo(cliente_socket)
@@ -199,7 +210,7 @@ def recibir_mensaje(cliente_socket) -> bytes:
     
     return respuestas[0]
 
-def recibir(cliente_socket):
+def recibir_tcp(cliente_socket):
     while True:
         data = cliente_socket.recv(1024)
 
@@ -214,18 +225,48 @@ def recibir(cliente_socket):
                 print(f"<Recibido ./{archivo_nombre}>")
         if data.startswith(b'TEXTO\n'):
             print(recibir_mensaje(cliente_socket))
+
+def recibir_udp(cliente_socket):
+    while True:
+        data, direccion = cliente_socket.recvfrom(1024)
+
+        if not data.decode() or data.decode() == '\r\n':
+            continue
+
+        if data.startswith(b'ARCHIVO\n'):
+            archivo_nombre = guardar_archivo(cliente_socket)
+            if not archivo_nombre:
+                print(f"[{datetime.now().strftime('%Y.%m.%d')} {datetime.now().strftime('%H:%M')}] <Error recibiendo archivo>")
+            else:
+                print(f"<Recibido ./{archivo_nombre}>")
+        if data.startswith(b'TEXTO\n'):
+            print(recibir_mensaje(cliente_socket))
                 
-def levantar_server():
+def levantar_server_tcp():
     while True:
         server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         server_socket.bind((MI_IP, PUERTO))
         server_socket.listen()
                 
         cliente_socket, cliente_direccion = server_socket.accept()
-        clientes.append(cliente_socket)
                                 
-        client_thread = threading.Thread(target=recibir, args=(cliente_socket,))
+        client_thread = threading.Thread(target=recibir_tcp, args=(cliente_socket,))
         client_thread.start()
+
+def levantar_server_udp():
+    server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    server_socket.bind((MI_IP, PUERTO))
+    recibir_udp(server_socket)
+
+def levantar_servidores():
+    tcp_thread = threading.Thread(target=levantar_server_tcp)
+    udp_thread = threading.Thread(target=levantar_server_udp)
+
+    tcp_thread.start()
+    udp_thread.start()
+
+    tcp_thread.join()
+    udp_thread.join()
 
 nombre_usuario_autenticado = autenticar()
 
@@ -240,4 +281,4 @@ input_var_thread.start()
 emitir_thread = threading.Thread(target=emitir, args=())
 emitir_thread.start()
 
-levantar_server()
+levantar_servidores()
