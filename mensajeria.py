@@ -10,7 +10,7 @@ import queue
 
 # # # # # # # # # # # # # # # # # # # # # # # #
 # Diego Barreto - 5.319.339-9				  #
-# Paula Vidal -								  #
+# Paula Vidal -			4.969.965-8     #
 # Brian Montero - 5.394.683-1				  #
 # Alexis Rojas - 4.679.803-9				  #
 # # # # # # # # # # # # # # # # # # # # # # # #
